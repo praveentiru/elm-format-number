@@ -334,11 +334,14 @@ splitNumberStringToParts locale number =
         |> buildNumberTuple
 
 
-{- Check is used in number validation for prefix and suffix checking
- -}
+
+{- Check is used in number validation for prefix and suffix checking -}
+
+
 type StringEdge
     = Prefix
     | Suffix
+
 
 
 {- Validates that `String` matches `Locale` and returns `Bool`.
@@ -356,7 +359,7 @@ type StringEdge
        --> Err "Negative or, Zero prefix or, suffix does not match locale"
 
        validateNumber {base | thousandSeparator = ","} "100#000.234"
-       --> Err "Thousands separtor does not match locale"
+       --> Err "One or more of characters in integer do no match locale's thousand separator"
 
        validateNumber {base | thousandSeparator = ","} "100,000.234"
        --> Ok True
@@ -374,6 +377,8 @@ type StringEdge
        --> Err "Number of decimal separators in string is more than 1"
 
 -}
+
+
 validateNumber : Locale -> String -> Result String Bool
 validateNumber locale value =
     -- TODO
@@ -451,7 +456,7 @@ validateNumber locale value =
         isCharAtStringEnd : StringEdge -> String -> Bool
         isCharAtStringEnd check string =
             string
-                |> (getStringEndFunction check) 1
+                |> getStringEndFunction check 1
                 |> hasNonDigits
 
         matchPrefixOrSuffix : StringEdge -> String -> String -> Bool
@@ -462,7 +467,7 @@ validateNumber locale value =
                 |> (==) substring
                 |> Debug.log "Match fn output"
 
-        validatePrefixAndSuffix : (String, String) -> String -> Bool
+        validatePrefixAndSuffix : ( String, String ) -> String -> Bool
         validatePrefixAndSuffix prefixSuffix valueString =
             let
                 prefix : String
@@ -472,34 +477,66 @@ validateNumber locale value =
                 suffix : String
                 suffix =
                     Tuple.second prefixSuffix
-
             in
-                case ((String.length prefix) == 0, 
-                    (String.length suffix) == 0) of
-                    (False, True) -> 
-                        matchPrefixOrSuffix Prefix prefix valueString
-                            && not (isCharAtStringEnd Suffix valueString)
+            case
+                ( String.length prefix == 0
+                , String.length suffix == 0
+                )
+            of
+                ( False, True ) ->
+                    matchPrefixOrSuffix Prefix prefix valueString
+                        && not (isCharAtStringEnd Suffix valueString)
 
-                    (True, False) ->
-                        not (isCharAtStringEnd Prefix valueString)
-                            && matchPrefixOrSuffix Suffix suffix
+                ( True, False ) ->
+                    not (isCharAtStringEnd Prefix valueString)
+                        && matchPrefixOrSuffix Suffix
+                            suffix
                             valueString
-                    (True, True) ->
-                        not (isCharAtStringEnd Prefix valueString)
-                            && not (isCharAtStringEnd Suffix valueString)
-                    (False, False) ->
-                        matchPrefixOrSuffix Prefix prefix valueString 
-                            && matchPrefixOrSuffix Suffix suffix valueString
+
+                ( True, True ) ->
+                    not (isCharAtStringEnd Prefix valueString)
+                        && not (isCharAtStringEnd Suffix valueString)
+
+                ( False, False ) ->
+                    matchPrefixOrSuffix Prefix prefix valueString
+                        && matchPrefixOrSuffix Suffix suffix valueString
 
         validateNegativePrefixAndSuffix : String -> Bool
         validateNegativePrefixAndSuffix valueString =
-            validatePrefixAndSuffix (locale.negativePrefix, 
-            locale.negativeSuffix) valueString
+            validatePrefixAndSuffix
+                ( locale.negativePrefix
+                , locale.negativeSuffix
+                )
+                valueString
 
         validateZeroPrefixAndSuffix : String -> Bool
         validateZeroPrefixAndSuffix valueString =
-            validatePrefixAndSuffix (locale.zeroPrefix, locale.zeroSuffix)
+            validatePrefixAndSuffix ( locale.zeroPrefix, locale.zeroSuffix )
+                valueString
+
+        digitsOnly : Regex.Regex
+        digitsOnly =
+            "\\d"
+                |> Regex.fromString
+                |> Maybe.withDefault Regex.never
+
+        thousandSeparatorCount : Int
+        thousandSeparatorCount =
+            value
+                |> String.indices locale.thousandSeparator
+                |> List.length
+
+        validateThousandSeparator : String -> Bool
+        validateThousandSeparator valueString =
             valueString
+                |> splitToParts
+                |> Tuple.first
+                |> String.dropLeft (String.length locale.negativePrefix)
+                |> Regex.replace digitsOnly (\_ -> "")
+                |> (==)
+                    (String.repeat thousandSeparatorCount
+                        locale.thousandSeparator
+                    )
     in
     if noOfDecimalSepartors value > 1 then
         Err "Number of decimal separators in string is more than 1"
@@ -517,8 +554,12 @@ validateNumber locale value =
     then
         Err "Negative or, Zero prefix or, suffix does not match locale"
 
+    else if validateThousandSeparator value /= True then
+        Err "One or more of characters in integer do no match locale's thousand separator"
+
     else
         Ok True
+            |> Debug.todo "Implement testing for numeric system"
 
 
 {-| Given a `Locale` parses a `Float` into a `FormattedNumber`:
