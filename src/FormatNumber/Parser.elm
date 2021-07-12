@@ -10,18 +10,16 @@ module FormatNumber.Parser exposing
     , splitByIndian
     , splitByWestern
     , splitInParts
+    , splitIntegers
     , splitNumberStringToParts
     , validateNumber
-    , splitIntegers
     )
 
-import Array exposing (Array)
 import Char
 import FormatNumber.Locales exposing (Decimals(..), Locale, System(..))
 import Regex
 import Round
 import String
-import Test.Html.Event exposing (check)
 
 
 {-| `Category` is a helper type and constructor to classify numbers in positive
@@ -604,6 +602,8 @@ validateNumber locale value =
     else
         Ok True
             |> Debug.todo "Implement testing for numeric system"
+
+
 {-| Given a `System` parses an integer `String` into a`List String`
 representing grouped integers:
 
