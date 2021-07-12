@@ -8,14 +8,18 @@ module FormatNumber.Parser exposing
     , parseString
     , removeZeros
     , splitInParts
+    , splitNumberStringToParts
     , splitThousands
+    , validateNumber
     )
 
+import Array exposing (Array)
 import Char
 import FormatNumber.Locales exposing (Decimals(..), Locale)
 import Regex
 import Round
 import String
+import Test.Html.Event exposing (check)
 
 
 {-| `Category` is a helper type and constructor to classify numbers in positive
@@ -216,27 +220,29 @@ getDecimals locale digits =
 
 
 {- Joins parts into `Maybe Float`. It expects parts to be strings with only
-digits.
+   digits.
 
-   joinParts ("100", "235")
-   --> Just 100.235
+      joinParts ("100", "235")
+      --> Just 100.235
 
-   joinParts ("", "534")
-   --> Just 0.534
+      joinParts ("", "534")
+      --> Just 0.534
 
-   joinParts ("243", "")
-   --> Just 243
+      joinParts ("243", "")
+      --> Just 243
 
-   joinParts ("", "")
-   --> Nothing
+      joinParts ("", "")
+      --> Nothing
 
-   joinParts ("100,00", "243")
-   --> Nothing
+      joinParts ("100,00", "243")
+      --> Nothing
 
-   joinParts ("10000", "24,3")
-   --> Nothing
+      joinParts ("10000", "24,3")
+      --> Nothing
 
 -}
+
+
 joinParts : ( String, String ) -> Maybe Float
 joinParts parts =
     let
@@ -272,6 +278,247 @@ joinParts parts =
 
         _ ->
             Maybe.map2 (+) integers decimalValue
+
+
+
+{- Assumes that it is receiving a list of size two and builds a tuple of first
+   and last item of the list
+-}
+
+
+buildNumberTuple : List String -> ( String, String )
+buildNumberTuple parts =
+    List.map2 Tuple.pair parts (List.reverse parts)
+        |> List.head
+        |> Maybe.withDefault ( "", "" )
+
+
+
+{- Splits number string into its integers and decimal parts. Assumes valid
+   number string. Use `validateNumber` to ensure number validity before calling
+   this function. See case 2 for failure when bad strings are used
+
+       import FormatNumber.Locales exposing (base)
+
+       splitNumberStringToParts {base | thousandSeparator = ","} "100,000.234"
+       --> ("100000", "234")
+
+       splitNumberStringToParts {base | thousandSeparator = ","} "100,000.23.4"
+       --> ("100000", "4")
+
+       splitNumberStringToParts {base | thousandSeparator = ","} "1,00,000.234"
+       --> ("100000", "234")
+
+       splitNumberStringToParts {base | thousandSeparator = ","} "1#00#000.234"
+       --> ("100000", "234")
+
+-}
+
+
+splitNumberStringToParts : Locale -> String -> ( String, String )
+splitNumberStringToParts locale number =
+    let
+        notDigits : Regex.Regex
+        notDigits =
+            "\\D"
+                |> Regex.fromString
+                |> Maybe.withDefault Regex.never
+
+        cleanString : String -> String
+        cleanString string =
+            Regex.replace notDigits (\_ -> "") string
+    in
+    number
+        |> String.split locale.decimalSeparator
+        |> List.map cleanString
+        |> buildNumberTuple
+
+
+{- Check is used in number validation for prefix and suffix checking
+ -}
+type StringEdge
+    = Prefix
+    | Suffix
+
+
+{- Validates that `String` matches `Locale` and returns `Bool`.
+   TODO: Add tests for numericSystem
+
+       import FormatNumber.Locales exposing (base, Decimals(..))
+
+       validateNumber {base | thousandSeparator = ",", negativePrefix = "-"} "-100,000.234"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = ",", negativePrefix = "(", negativeSuffix = ")"} "(100,000.234)"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = ","} "(100,000.234)"
+       --> Err "Negative or, Zero prefix or, suffix does not match locale"
+
+       validateNumber {base | thousandSeparator = ","} "100#000.234"
+       --> Err "Thousands separtor does not match locale"
+
+       validateNumber {base | thousandSeparator = ","} "100,000.234"
+       --> Ok True
+
+       validateNumber {base | decimals = Max 0, thousandSeparator = ","} "100,000.2"
+       --> Err "Number of digits in decimal does not match locale"
+
+       validateNumber {base | decimals = Exact 2, thousandSeparator = ","} "100,000.234"
+       --> Err "Number of digits in decimal does not match locale"
+
+       validateNumber {base | decimals = Min 4, thousandSeparator = ","} "100,000.234"
+       --> Err "Number of digits in decimal does not match locale"
+
+       validateNumber {base | thousandSeparator = ","} "100,000.23.4"
+       --> Err "Number of decimal separators in string is more than 1"
+
+-}
+validateNumber : Locale -> String -> Result String Bool
+validateNumber locale value =
+    -- TODO
+    -- 4. Check thousands separator matches
+    -- Change to manage multiple instances of thousand separator
+    -- tCnt = nbr |> String.indices "," |> List.length
+    -- nbr |> String.split "." |> List.head |> Maybe.withDefault "" |> String.dropLeft (String.length np) |> Regex.replace reg (\_ -> "") |> (==) (String.repeat tCnt ",")
+    -- 5. Check thousands separator gap matches numericSystem
+    -- Borrow from Eduardo code to figure out calculation
+    -- Sequence of testing
+    -- Check for deviation rather than valid format
+    -- Check negative suffix and prefix
+    -- Check zero suffix and prefix
+    -- Check thousand separator match
+    -- Check gap between thousand separators for numericSystem
+    let
+        noOfDecimalSepartors : String -> Int
+        noOfDecimalSepartors valueString =
+            valueString
+                |> String.indices locale.decimalSeparator
+                |> List.length
+
+        splitToParts : String -> ( String, String )
+        splitToParts valueString =
+            valueString
+                |> String.split locale.decimalSeparator
+                |> buildNumberTuple
+
+        -- Assumption: It is already validated that there is one or, less
+        -- decimalSeparator so, String.split will result in list of size two
+        -- or, one. Logic works in either case
+        decimalCount : String -> Int
+        decimalCount valueString =
+            valueString
+                |> splitToParts
+                |> Tuple.second
+                |> String.length
+
+        validateDecimalCount : String -> Bool
+        validateDecimalCount valueString =
+            case locale.decimals of
+                Min count ->
+                    decimalCount valueString >= count
+
+                Max count ->
+                    decimalCount valueString <= count
+
+                Exact count ->
+                    decimalCount valueString == count
+
+        notDigits : Regex.Regex
+        notDigits =
+            "\\D"
+                |> Regex.fromString
+                |> Maybe.withDefault Regex.never
+
+        hasNonDigits : String -> Bool
+        hasNonDigits valueString =
+            valueString
+                |> Debug.log "Has non digit input"
+                |> Regex.findAtMost 1 notDigits
+                |> List.length
+                |> (==) 1
+                |> Debug.log "Has non digit output"
+
+        getStringEndFunction : StringEdge -> (Int -> String -> String)
+        getStringEndFunction check =
+            case check of
+                Prefix ->
+                    String.left
+
+                Suffix ->
+                    String.right
+
+        isCharAtStringEnd : StringEdge -> String -> Bool
+        isCharAtStringEnd check string =
+            string
+                |> (getStringEndFunction check) 1
+                |> hasNonDigits
+
+        matchPrefixOrSuffix : StringEdge -> String -> String -> Bool
+        matchPrefixOrSuffix check substring string =
+            string
+                |> Debug.log "Match fn input"
+                |> getStringEndFunction check (String.length substring)
+                |> (==) substring
+                |> Debug.log "Match fn output"
+
+        validatePrefixAndSuffix : (String, String) -> String -> Bool
+        validatePrefixAndSuffix prefixSuffix valueString =
+            let
+                prefix : String
+                prefix =
+                    Tuple.first prefixSuffix
+
+                suffix : String
+                suffix =
+                    Tuple.second prefixSuffix
+
+            in
+                case ((String.length prefix) == 0, 
+                    (String.length suffix) == 0) of
+                    (False, True) -> 
+                        matchPrefixOrSuffix Prefix prefix valueString
+                            && not (isCharAtStringEnd Suffix valueString)
+
+                    (True, False) ->
+                        not (isCharAtStringEnd Prefix valueString)
+                            && matchPrefixOrSuffix Suffix suffix
+                            valueString
+                    (True, True) ->
+                        not (isCharAtStringEnd Prefix valueString)
+                            && not (isCharAtStringEnd Suffix valueString)
+                    (False, False) ->
+                        matchPrefixOrSuffix Prefix prefix valueString 
+                            && matchPrefixOrSuffix Suffix suffix valueString
+
+        validateNegativePrefixAndSuffix : String -> Bool
+        validateNegativePrefixAndSuffix valueString =
+            validatePrefixAndSuffix (locale.negativePrefix, 
+            locale.negativeSuffix) valueString
+
+        validateZeroPrefixAndSuffix : String -> Bool
+        validateZeroPrefixAndSuffix valueString =
+            validatePrefixAndSuffix (locale.zeroPrefix, locale.zeroSuffix)
+            valueString
+    in
+    if noOfDecimalSepartors value > 1 then
+        Err "Number of decimal separators in string is more than 1"
+
+    else if not (validateDecimalCount value) then
+        Err "Number of digits in decimal does not match locale"
+
+    else if
+        (hasNonDigits (String.left 1 value)
+            || hasNonDigits (String.right 1 value)
+        )
+            && (not (validateNegativePrefixAndSuffix value)
+                    && not (validateZeroPrefixAndSuffix value)
+               )
+    then
+        Err "Negative or, Zero prefix or, suffix does not match locale"
+
+    else
+        Ok True
 
 
 {-| Given a `Locale` parses a `Float` into a `FormattedNumber`:
@@ -460,9 +707,9 @@ parseString locale value =
             "\\D"
                 |> Regex.fromString
                 |> Maybe.withDefault Regex.never
-        
+
         onlyDigits : String -> String
-        onlyDigits = 
+        onlyDigits =
             Regex.replace notDigits (\_ -> "")
 
         splitValue : String -> List String
