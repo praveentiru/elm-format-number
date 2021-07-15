@@ -20,6 +20,7 @@ import FormatNumber.Locales exposing (Decimals(..), Locale, System(..))
 import Regex
 import Round
 import String
+import List exposing (tail)
 
 
 {-| `Category` is a helper type and constructor to classify numbers in positive
@@ -386,25 +387,20 @@ type StringEdge
 
 
 
+{- PrefixSuffix is used for validation of prefix and suffix -}
+
+
+type alias PrefixSuffix =
+    { prefix : String
+    , suffix : String
+    }
+
+
+
 {- Validates that `String` matches `Locale` and returns `Bool`.
    TODO: Add tests for numericSystem
 
-       import FormatNumber.Locales exposing (base, Decimals(..))
-
-       validateNumber {base | thousandSeparator = ",", negativePrefix = "-"} "-100,000.234"
-       --> Ok True
-
-       validateNumber {base | thousandSeparator = ",", negativePrefix = "(", negativeSuffix = ")"} "(100,000.234)"
-       --> Ok True
-
-       validateNumber {base | thousandSeparator = ","} "(100,000.234)"
-       --> Err "Negative or, Zero prefix or, suffix does not match locale"
-
-       validateNumber {base | thousandSeparator = ","} "100#000.234"
-       --> Err "One or more of characters in integer do no match locale's thousand separator"
-
-       validateNumber {base | thousandSeparator = ","} "100,000.234"
-       --> Ok True
+       import FormatNumber.Locales exposing (base, Decimals(..), System(..))
 
        validateNumber {base | decimals = Max 0, thousandSeparator = ","} "100,000.2"
        --> Err "Number of digits in decimal does not match locale"
@@ -415,8 +411,44 @@ type StringEdge
        validateNumber {base | decimals = Min 4, thousandSeparator = ","} "100,000.234"
        --> Err "Number of digits in decimal does not match locale"
 
+       validateNumber {base | decimals = Exact 2, thousandSeparator = ","} "100,000.23"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = ",", negativePrefix = "-"} "-100,000.234"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = "#", negativePrefix = "-"} "-100#000.234"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = ",", negativePrefix = "(", negativeSuffix = ")"} "(100,000.234)"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = ",", zeroPrefix = "(", zeroSuffix = ")"} "(100,000.234)"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = ",", positivePrefix = "(", positiveSuffix = ")"} "(100,000.234)"
+       --> Ok True
+
+       validateNumber {base | thousandSeparator = ","} "(100,000.234)"
+       --> Err "Prefix or, suffix do not match with any of Positive, Negative and Zero"
+
+       validateNumber {base | thousandSeparator = ","} "1#000,000.234"
+       --> Err "One or more of characters in integer do no match locale's thousand separator"
+
+       validateNumber {base | thousandSeparator = ","} "100,000.234"
+       --> Ok True
+
        validateNumber {base | thousandSeparator = ","} "100,000.23.4"
        --> Err "Number of decimal separators in string is more than 1"
+
+       validateNumber {base | thousandSeparator = ",", system = Indian} "1,000,000.234"
+       --> Err "Number of digits between thousand separator does not match locale"
+
+       validateNumber {base | thousandSeparator = ",", system = Western} "10,00,000.234"
+       --> Err "Number of digits between thousand separator does not match locale"
+
+       validateNumber {base | thousandSeparator = ","} "1,000,000.234"
+       --> Ok True
 
 -}
 
@@ -424,17 +456,8 @@ type StringEdge
 validateNumber : Locale -> String -> Result String Bool
 validateNumber locale value =
     -- TODO
-    -- 4. Check thousands separator matches
-    -- Change to manage multiple instances of thousand separator
-    -- tCnt = nbr |> String.indices "," |> List.length
-    -- nbr |> String.split "." |> List.head |> Maybe.withDefault "" |> String.dropLeft (String.length np) |> Regex.replace reg (\_ -> "") |> (==) (String.repeat tCnt ",")
     -- 5. Check thousands separator gap matches numericSystem
     -- Borrow from Eduardo code to figure out calculation
-    -- Sequence of testing
-    -- Check for deviation rather than valid format
-    -- Check negative suffix and prefix
-    -- Check zero suffix and prefix
-    -- Check thousand separator match
     -- Check gap between thousand separators for numericSystem
     let
         noOfDecimalSepartors : String -> Int
@@ -480,11 +503,9 @@ validateNumber locale value =
         hasNonDigits : String -> Bool
         hasNonDigits valueString =
             valueString
-                |> Debug.log "Has non digit input"
                 |> Regex.findAtMost 1 notDigits
                 |> List.length
                 |> (==) 1
-                |> Debug.log "Has non digit output"
 
         getStringEndFunction : StringEdge -> (Int -> String -> String)
         getStringEndFunction check =
@@ -504,21 +525,19 @@ validateNumber locale value =
         matchPrefixOrSuffix : StringEdge -> String -> String -> Bool
         matchPrefixOrSuffix check substring string =
             string
-                |> Debug.log "Match fn input"
                 |> getStringEndFunction check (String.length substring)
                 |> (==) substring
-                |> Debug.log "Match fn output"
 
-        validatePrefixAndSuffix : ( String, String ) -> String -> Bool
+        validatePrefixAndSuffix : PrefixSuffix -> String -> Bool
         validatePrefixAndSuffix prefixSuffix valueString =
             let
                 prefix : String
                 prefix =
-                    Tuple.first prefixSuffix
+                    prefixSuffix.prefix
 
                 suffix : String
                 suffix =
-                    Tuple.second prefixSuffix
+                    prefixSuffix.suffix
             in
             case
                 ( String.length prefix == 0
@@ -546,14 +565,19 @@ validateNumber locale value =
         validateNegativePrefixAndSuffix : String -> Bool
         validateNegativePrefixAndSuffix valueString =
             validatePrefixAndSuffix
-                ( locale.negativePrefix
-                , locale.negativeSuffix
-                )
+                (PrefixSuffix locale.negativePrefix locale.negativeSuffix)
                 valueString
 
         validateZeroPrefixAndSuffix : String -> Bool
         validateZeroPrefixAndSuffix valueString =
-            validatePrefixAndSuffix ( locale.zeroPrefix, locale.zeroSuffix )
+            validatePrefixAndSuffix
+                (PrefixSuffix locale.zeroPrefix locale.zeroSuffix)
+                valueString
+
+        validatePositivePrefixAndSuffix : String -> Bool
+        validatePositivePrefixAndSuffix valueString =
+            validatePrefixAndSuffix
+                (PrefixSuffix locale.positivePrefix locale.positiveSuffix)
                 valueString
 
         digitsOnly : Regex.Regex
@@ -579,6 +603,33 @@ validateNumber locale value =
                     (String.repeat thousandSeparatorCount
                         locale.thousandSeparator
                     )
+        
+        validateSystem : String -> Bool
+        validateSystem valueString =
+            let
+                test = "Hello world"
+                thousandSeparatorPositions : List Int
+                thousandSeparatorPositions =
+                    String.indices locale.thousandSeparator valueString
+
+                offsetSeparatorPosition : List Int
+                offsetSeparatorPosition =
+                    thousandSeparatorPositions
+                        |> List.take 1
+                        |> (++) (List.tail thousandSeparatorPositions |> Maybe.withDefault [])
+
+                expectedPitch : Int
+                expectedPitch =
+                    case locale.system of
+                        Western ->
+                            4
+                        Indian ->
+                            3
+            in
+                List.map2 (-) offsetSeparatorPosition thousandSeparatorPositions
+                    |> List.take (thousandSeparatorCount - 1)
+                    |> List.map (\n -> n == expectedPitch)
+                    |> List.foldl (&&) True
     in
     if noOfDecimalSepartors value > 1 then
         Err "Number of decimal separators in string is more than 1"
@@ -592,16 +643,19 @@ validateNumber locale value =
         )
             && (not (validateNegativePrefixAndSuffix value)
                     && not (validateZeroPrefixAndSuffix value)
+                    && not (validatePositivePrefixAndSuffix value)
                )
     then
-        Err "Negative or, Zero prefix or, suffix does not match locale"
+        Err "Prefix or, suffix do not match with any of Positive, Negative and Zero"
 
     else if validateThousandSeparator value /= True then
         Err "One or more of characters in integer do no match locale's thousand separator"
 
+    else if validateSystem value /= True then
+        Err "Number of digits between thousand separator does not match locale"
+
     else
         Ok True
-            |> Debug.todo "Implement testing for numeric system"
 
 
 {-| Given a `System` parses an integer `String` into a`List String`
